@@ -13,6 +13,10 @@ python sim.py        # prints the metrics table, writes results.png
 
 The seed is fixed, so results are reproducible. The script asserts that the designed policy beats both baselines.
 
+## Interactive demo
+
+`index.html` is a dependency-free JS port of `sim.py` with sliders for every threshold, dwell time, k, noise and the outage window. Open it locally, or enable GitHub Pages (Settings > Pages > deploy from `main`, root). At default settings and noise seed 0 it reproduces the results table below exactly (the numpy noise sequence is embedded).
+
 ## Scenario
 
 One road segment, 17:30-19:30. True risk (0-100) is 5 on a quiet road, ramps to 90 between 17:45 and 18:00 (crowd surge), holds until 18:30, then decays to 5 by 19:00. Sensor noise is 5 points. Sensors are blind from 17:48 to 17:58, during the ramp-up; the last reading is held and the system is not told it is stale.

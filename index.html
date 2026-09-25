@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dynamic Geofence Simulation</title>
+<style>
+:root{--bg:#fafafa;--fg:#1a1a1a;--mute:#666;--line:#ddd;--card:#fff;--truth:#111;--meas:#2b6cb0;--rc:#d62f2f;--shade:rgba(255,160,0,.15);--grid:#bbb}
+@media (prefers-color-scheme:dark){:root{--bg:#141414;--fg:#eee;--mute:#999;--line:#333;--card:#1c1c1c;--truth:#eee;--meas:#63a4ff;--rc:#ff6b6b;--shade:rgba(255,160,0,.18);--grid:#555}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,sans-serif}
+main{max-width:1000px;margin:0 auto;padding:16px}
+h1{font-size:1.25rem;margin:.2rem 0}
+p.sub{color:var(--mute);margin:.2rem 0 1rem;font-size:.9rem}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px;margin-bottom:12px}
+#ctl{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px 16px}
+#ctl label{display:block;font-size:.8rem;color:var(--mute)}
+#ctl label b{color:var(--fg);font-weight:600;float:right}
+#ctl input[type=range]{width:100%}
+#ctl input[type=number]{width:100%}
+button{font:inherit;padding:4px 12px;border:1px solid var(--line);background:var(--card);color:var(--fg);border-radius:6px;cursor:pointer;margin-right:6px}
+canvas{width:100%;display:block}
+.tw{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:.85rem}
+th,td{padding:4px 8px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}
+th:first-child,td:first-child{text-align:left}
+small{color:var(--mute)}
+</style>
+</head>
+<body>
+<main>
+<h1>Dynamic geofence: hysteresis simulation</h1>
+<p class="sub">One road segment, 17:30–19:30, stadium crowd surge with a sensor outage. Synthetic data; supports ED5012 Problem 6, Tasks 6 and 7. Ports <code>sim.py</code>; default settings reproduce its numbers.</p>
+
+<div class="card">
+  <div id="ctl"></div>
+  <p style="margin:10px 0 0"><button id="reset">Reset to submitted values</button><button id="reseed">New random noise</button><small id="seedlbl"></small></p>
+</div>
+
+<div class="card"><canvas id="cv"></canvas></div>
+
+<div class="card tw">
+  <table id="tbl"></table>
+  <small>Unsafe exposure: true risk ≥ enter-red while state below red. Over-restriction: orange/red while true risk &lt; enter-orange − 10. Red lag &lt; 0: red set before true risk crossed the red threshold.</small>
+</div>
+</main>
+
+<script>
+// CORE-START
+const DT = 10, N = 720, NAMES = ["green", "yellow", "orange", "red"];
+const Z0 = [0.125730221,-0.132104863,0.64042265,0.104900117,-0.535669373,0.361595055,1.30400005,0.947080963,-0.703735236,-1.26542147,-0.623274463,0.0413259793,-2.32503077,-0.218791664,-1.24591095,-0.732267355,-0.544258983,-0.316300156,0.411630536,1.04251337,-0.128534663,1.36646347,-0.665194673,0.35151007,0.903470182,0.0940122978,-0.743499249,-0.921725376,-0.457725826,0.220195123,-1.00961818,-0.209175575,-0.15922501,0.540845585,0.214659123,0.355372709,-0.653828609,-0.129613634,0.78397547,1.49343115,-1.25906553,1.51392377,1.34587542,0.781311401,0.26445563,-0.313922815,1.45802068,1.96025832,1.80163487,1.31510376,0.357380411,-1.20831863,-0.00445413312,0.656474935,-1.28836146,0.39512206,0.429863695,0.696042724,-1.18411797,-0.661702572,-0.436435247,-1.16980191,1.73936788,-0.495910728,0.328969629,-0.258572545,1.58347288,1.32036099,0.633352623,-2.20350988,0.0520289743,0.683686191,1.00396158,-0.617907045,1.82201136,-1.32043097,-0.661528022,0.935049988,0.0490546138,2.00239258,0.188519193,-0.63319409,-0.377563505,-1.09114612,-1.27768017,0.630411491,0.581165812,1.29455882,-0.754605791,1.68910745,-0.287387708,1.57440828,-0.432785847,-0.735483292,0.249785372,1.03145308,0.161009577,-0.585528824,-1.34121971,-1.40152021,0.50268285,0.989713033,-0.164294593,-1.07436486,0.873042153,-1.28039394,-0.713068095,0.621017854,-2.25014117,0.386369598,-0.581640836,0.109279697,-0.0757015262,0.202114395,0.694171937,-0.758369751,1.42098202,0.726093789,0.843732662,1.16486398,0.787588222,0.844078681,0.0755936107,-1.42677385,-0.1350451,-0.76951464,-1.42274177,0.258452791,-0.568549454,-1.02980444,-1.04300108,0.26841708,0.358671949,1.32245747,-0.0139146685,1.04183976,1.40226483,1.15016564,-2.36530391,1.22868372,0.339620008,0.423771353,0.371227418,0.38275716,0.31941422,-0.358913309,-1.9016353,-0.108914728,-0.803731849,1.08016341,-0.288766506,0.0834753561,-0.849605956,-0.510622468,-0.0115330617,-1.48537518,0.300685114,-0.106072253,-1.18571981,-2.39823287,0.513052134,-0.297584039,-0.530008413,-0.23615463,1.81647594,-0.0498009691,0.086619263,-1.48707287,1.64733907,0.917487983,1.06693487,0.0476727312,0.916654789,0.370946835,0.613189078,-0.152192958,-1.47388795,1.02885435,-1.93495964,-0.239936671,-0.204522488,-1.04286014,0.613123136,-0.200329701,-0.436868326,0.519841731,-0.476579041,1.38897997,0.351455076,-0.474332987,-1.94426498,-1.3077532,1.08683078,-0.0506040631,-0.283125066,1.64325161,-1.28264924,-0.5856578,-0.472587677,0.586337282,-0.663535198,-0.613417849,-1.6051494,0.729349404,0.806139359,-0.476376747,0.163339946,-1.29264612,-0.471813155,1.37795095,0.135730734,2.31036349,-0.787192742,0.580284417,-0.195505828,0.565817847,-0.00721135966,-0.56119811,-0.867616764,3.06603674,-0.0773450597,-2.01666069,-0.648600608,0.678039727,-0.500008433,1.3604462,1.00239827,-0.152338636,-0.472215943,-1.00480101,-0.699966542,-1.47314307,1.20439629,1.59070079,-1.25613807,-1.18168298,-1.76851186,-0.963854231,-3.1063368,-1.14227896,1.2969154,-0.345672529,0.854584235,-0.488969064,1.7606673,0.199217983,-0.382002292,2.55242403,-0.324471856,-1.22122335,0.201910002,-0.0388350386,1.06632455,-0.921633924,0.804716931,0.852748471,-0.667687292,0.163244006,-0.830751957,2.34580807,-0.704139562,-0.453074444,-1.06583802,-0.346121275,-0.0058760267,0.767789135,-0.610486646,-0.185773959,-1.41648937,-0.827402227,2.75580756,1.04124319,-0.781424042,-1.33739724,-0.975582831,-0.0216908595,0.0347277884,-0.744360601,-1.28657447,1.42237851,0.451685451,-0.37456802,-0.220661208,-0.529530459,-2.93604545,0.115661827,-1.07054441,-1.0026843,-0.640262405,0.732301715,-1.17053081,-1.43428146,0.639852075,0.754368905,-0.958933708,0.562397677,-0.29163243,0.301292177,-1.26096028,0.832894449,1.20325895,0.637073236,0.558339962,-3.77227516,0.260629749,-0.0254453167,-0.147045507,-0.63057799,0.0553649749,0.412117405,-0.263788161,-0.46332414,1.22975381,-1.10536711,1.0301552,0.176812464,-0.804305645,-0.289981896,-0.919993603,0.675064518,0.347901762,-0.556796175,-1.1022183,0.301716094,0.957385607,-0.113836349,0.418352501,-0.376027151,0.067569206,-0.291282911,0.294042143,-1.50977251,0.644190523,-0.229932482,0.358608068,-0.340310127,0.320361189,-1.0725628,1.18915441,-1.70354459,-1.03923881,0.23566607,1.46284229,0.278126302,-0.247908455,-1.42509014,-0.191276664,-0.019877011,1.69056865,0.622125222,-1.52909287,2.0267791,-0.395009875,-0.879459715,1.47482265,-0.0497557603,-0.367402599,0.218785989,0.84488878,0.993336204,-1.3752024,1.99848147,0.946861588,-0.379201062,-0.818659852,-0.969012431,0.123378438,-0.648016294,-0.764873965,0.811254405,0.364567344,-0.394571258,0.734247596,1.36737863,-1.09449631,-0.603291884,0.94262184,0.718940566,0.226698856,1.16242119,-1.08821173,-1.47913783,-0.866507357,0.122544096,-0.796086775,-0.487218156,-0.975000119,-0.620429145,-1.00478722,0.367466206,0.794891068,-0.48044594,-0.207265795,-0.581032573,0.531251216,0.0890560387,1.5941569,-1.09547204,0.362502499,0.4439914,-0.360440171,0.583534127,-1.43852265,2.11880303,-1.34204445,0.919807261,-1.12112268,1.15088303,-0.384774027,0.158422907,0.0533437557,1.1007341,-0.32154745,-2.96718371,-0.76005879,0.183712323,-0.440468205,0.769820851,1.015327,-0.14777181,-1.48964539,1.38416511,1.0830535,-0.299191134,2.10828841,-0.34887546,-1.13711972,-0.155873434,1.07783372,-0.937453443,1.95122508,-0.896526215,0.954422276,0.544462374,-0.15405706,1.08053298,-1.49979879,1.35757179,-0.063684029,-0.54243525,0.749174048,1.05989901,0.769795431,1.99950382,1.08072608,1.28350663,-0.539863937,0.106523777,0.562982582,-0.0177422367,0.301635233,0.426104766,0.844243918,-0.101608891,-0.349799215,-0.82831565,-0.891732326,1.17245123,-0.084521488,0.786944381,-1.29736385,-1.93816811,-1.04909123,1.14662697,1.06807744,0.332038608,-0.80217015,-0.130802642,-0.29776048,-0.344973346,-2.50606984,-0.857926386,-0.190108876,1.51642779,0.160743059,1.40088829,-0.393706909,-0.252688581,-3.89942173,0.463330339,0.547095661,1.76375907,-0.486761211,0.0941541562,-0.705527955,-1.17625706,-0.713107967,-0.344998524,1.35543803,0.00221160257,-0.79054481,0.141877828,0.217571356,-0.676232056,1.14323363,-1.88834889,-0.213544628,0.665066066,-1.33843252,0.361253749,1.29289305,0.453671264,-1.69015994,-0.728195027,1.2323034,0.298335245,-0.00985893849,0.441200595,0.72104895,-0.708465237,-0.29040008,0.14291365,-0.543957722,-0.133451559,1.29787176,-0.967819865,1.92666271,1.87934438,-1.71343944,-0.141022665,0.34269157,-0.760871088,-0.741080504,-0.237415697,0.739178087,-0.511333839,1.82669381,0.289974002,-0.102575284,1.44925969,0.626281195,0.369286776,-0.331140383,1.81398561,0.81182159,-0.203411336,-1.57719915,0.372951542,-1.14374009,-1.71594595,-0.279151505,0.281471103,1.28248123,0.282451825,0.806019527,-1.22588271,-0.0225321775,0.124211319,0.862246185,0.116060673,0.804078958,-0.504199248,0.357954906,0.414866401,-1.24977572,0.175538629,-0.320362527,-1.90408795,0.95840668,-0.36185868,-0.852390058,-0.377316744,0.138200303,1.50790948,-0.165933203,0.472407497,1.37357938,0.533550531,1.06856416,-0.476509859,0.771049326,-0.0579760001,1.07441124,-1.00355957,-0.779557753,1.26873157,-0.196083973,-0.358960647,0.0775724194,-0.689497457,1.33194137,-1.24916265,-0.150597998,0.346952786,-0.104447069,-0.802287545,-0.868389197,0.425394426,-1.03048045,0.646242706,-1.52414836,-0.554983097,0.0363060224,-1.25215194,0.652010864,-0.0185388133,-1.03607368,-1.51888823,-1.56558937,0.0510339451,-1.15683011,-1.3648796,-0.231225935,2.27750052,0.277540361,0.762918834,0.212718346,0.782982166,-1.34308865,-0.43051197,0.261350846,-0.0179168161,-0.19199322,-0.66587608,-0.258383103,-0.774197824,-2.42183301,-1.19450844,0.475652939,1.55707796,1.81358017,0.0967517437,0.893383623,0.907977911,-0.692259184,-1.69793983,0.0308873194,-1.762201,-0.319929613,0.608117087,-1.42006949,0.0322953839,1.24001812,0.361512474,0.522321701,0.906740414,1.73296307,0.151423082,1.22950086,-0.0641692163,-0.546168815,0.31482097,-0.605812848,-0.573129216,-0.60774063,-2.2954242,0.105499478,-1.26383536,-0.107269121,1.44996878,-0.521000323,-0.542009158,1.36390938,0.546305765,0.976527097,-0.355291234,0.748083213,-0.686168589,-0.676001726,0.596244278,-0.598373171,0.767118543,2.39168454,-1.68615254,-0.752204376,1.12014618,-0.145078169,1.16108985,-1.01006427,0.331344178,-0.150556318,0.140370723,0.331116019,-1.22000636,-1.07413749,1.39924401,0.293213712,0.106346333,-0.0440747226,0.356542499,-1.15593674,-0.999027332,1.30450825,0.151275222,0.850300874,-0.605664007,1.37672538,0.345278405,0.481245819,0.548729338,-0.797009239,-1.86572086,-1.07480267,1.63052286,1.30068397,-0.346921368,-0.301676327,1.03660588,-0.168409873,-1.29925987,1.26554309,0.477178578,-2.51633972,-0.313190106,0.143670203,0.481246827,0.152151189,-0.635741797,-0.115759044,0.294800318,-0.268004086,-0.37190072,1.25208394,-0.946607685,-0.349463471,-2.03126901,0.540969963,0.82826446,0.548486833,0.917672487];   // standard-normal noise from numpy seed 0, so seed 0 matches sim.py
+const P0 = {noise:5, base:5, outStart:1080, outLen:600, kGood:1.5, kPoor:2.0, floor:50, urgent:85,
+  minDwell:60, e1:30, e2:50, e3:70, r1:20, r2:40, r3:60, d1:180, d2:120, d3:120, seed:0};
+
+function interp(x, xs, ys) {
+  for (let i = 1; i < xs.length; i++) if (x <= xs[i]) return ys[i-1] + (ys[i]-ys[i-1]) * (x-xs[i-1]) / (xs[i]-xs[i-1]);
+  return ys[ys.length-1];
+}
+function mulberry32(a) { return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+function noiseFor(seed) {
+  if (seed === 0) return Z0;
+  const r = mulberry32(seed), z = [];
+  for (let i = 0; i < N; i++) z.push(Math.sqrt(-2 * Math.log(1 - r())) * Math.cos(2 * Math.PI * r()));
+  return z;
+}
+
+function scenario(P) {
+  const z = noiseFor(P.seed), t = [], truth = [], mu = [], rc = [], blind = [];
+  let age = 0;
+  for (let i = 0; i < N; i++) {
+    const ti = i * DT, tr = interp(ti, [0,900,1800,3600,5400,7200], [P.base,P.base,90,90,P.base,P.base]);
+    const b = ti >= P.outStart && ti < P.outStart + P.outLen;
+    const meas = Math.min(100, Math.max(0, tr + P.noise * z[i]));
+    if (b && i > 0) { mu.push(mu[i-1]); age += DT; } else { mu.push(meas); age = 0; }
+    const sigma = 0.05 + 0.0015 * age;
+    let r = 100 * Math.min(1, mu[i] / 100 + (b ? P.kPoor : P.kGood) * sigma);
+    if (b) r = Math.max(r, P.floor);
+    t.push(ti); truth.push(tr); blind.push(b); rc.push(r);
+  }
+  return {t, truth, mu, rc, blind};
+}
+
+const level = (x, E) => E.filter(e => e <= x).length;
+
+function designed(rc, P) {
+  const E = [P.e1, P.e2, P.e3], R = [P.r1, P.r2, P.r3], D = [P.d1, P.d2, P.d3];
+  let s = 0, since = P.minDwell, below = 0, prev = 0;
+  const out = [], urgentAt = new Set();
+  rc.forEach((r, i) => {
+    since += DT;
+    const target = level(r, E);
+    if (target > s && r >= P.urgent) { s = target; since = 0; below = 0; urgentAt.add(i); }
+    else if (Math.min(target, prev) > s && since >= P.minDwell) { s = Math.min(target, prev); since = 0; below = 0; }
+    else if (s > 0 && r < R[s-1]) {
+      below += DT;
+      if (below >= D[s-1] && since >= P.minDwell) { s--; since = 0; below = 0; }
+    } else below = 0;
+    prev = target; out.push(s);
+  });
+  return {state: out, urgentAt};
+}
+
+function metrics(state, truth, P, urgentAt = new Set()) {
+  const ch = [];
+  for (let i = 1; i < state.length; i++) if (state[i] !== state[i-1]) ch.push(i);
+  let viol = 0;
+  for (let k = 1; k < ch.length; k++) if ((ch[k] - ch[k-1]) * DT < P.minDwell && !urgentAt.has(ch[k])) viol++;
+  const red = state.indexOf(3), hot = truth.findIndex(x => x >= P.e3);
+  let unsafe = 0, over = 0;
+  state.forEach((s, i) => { if (truth[i] >= P.e3 && s < 3) unsafe++; if (s >= 2 && truth[i] < P.e2 - 10) over++; });
+  return {flips: ch.length, viol, unsafe: unsafe * DT, over: over * DT,
+          lag: red < 0 || hot < 0 ? null : (red - hot) * DT};
+}
+
+function run(P) {
+  const sc = scenario(P), E = [P.e1, P.e2, P.e3];
+  const d = designed(sc.rc, P);
+  const policies = [
+    ["Naive (raw reading, single threshold)", sc.mu.map(x => level(x, E)), new Set()],
+    ["Conservative, memoryless", sc.rc.map(x => level(x, E)), new Set()],
+    ["Designed (hysteresis + dwell)", d.state, d.urgentAt],
+  ].map(([n, s, u]) => ({name: n, state: s, m: metrics(s, sc.truth, P, u)}));
+  return {sc, policies};
+}
+// CORE-END
+
+const SLIDERS = [
+  ["noise","Sensor noise (pts)",0,15,.5], ["base","Quiet-road true risk",0,20,1],
+  ["outStart","Outage start (s)",0,6600,30], ["outLen","Outage length (s)",0,2400,30],
+  ["kGood","k, good coverage",0,3,.1], ["kPoor","k, blind",0,4,.1], ["floor","Blind event-area floor",0,100,5],
+  ["urgent","Urgent bypass at",50,100,1], ["minDwell","Min dwell (s)",0,300,10],
+  ["e1","Enter yellow",5,95,1], ["e2","Enter orange",5,95,1], ["e3","Enter red",5,99,1],
+  ["r1","Release to green",0,95,1], ["r2","Release to yellow",0,95,1], ["r3","Release to orange",0,95,1],
+  ["d1","Dwell yellow→green (s)",0,600,10], ["d2","Dwell orange→yellow (s)",0,600,10], ["d3","Dwell red→orange (s)",0,600,10],
+];
+let P = {...P0};
+const ctl = document.getElementById("ctl"), inputs = {};
+for (const [k, label, min, max, step] of SLIDERS) {
+  const l = document.createElement("label"), v = document.createElement("b"), i = document.createElement("input");
+  i.type = "range"; Object.assign(i, {min, max, step}); i.value = P[k];
+  i.oninput = () => { P[k] = +i.value; v.textContent = i.value; draw(); };
+  l.append(label, v, i); v.textContent = i.value; ctl.append(l); inputs[k] = [i, v];
+}
+document.getElementById("reset").onclick = () => { P = {...P0}; for (const k in inputs) { inputs[k][0].value = P[k]; inputs[k][1].textContent = P[k]; } draw(); };
+document.getElementById("reseed").onclick = () => { P.seed = 1 + Math.floor(Math.random() * 1e6); draw(); };
+
+const cv = document.getElementById("cv"), css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+function draw() {
+  const {sc, policies} = run(P), dpr = window.devicePixelRatio || 1;
+  const W = cv.clientWidth, H = Math.round(Math.min(720, Math.max(520, W * .7)));
+  cv.width = W * dpr; cv.height = H * dpr; cv.style.height = H + "px";
+  const g = cv.getContext("2d"); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
+  const L = 62, Rm = 8, T = 24, gap = 22, pw = W - L - Rm, hs = [0.34, 0.2, 0.2, 0.2];
+  const avail = H - T - 22 - gap * 3, x = i => L + pw * i / (N - 1);
+  g.font = "11px system-ui,sans-serif"; g.textBaseline = "middle";
+  let y0 = T;
+  const panel = (h, ymax, fn, yTicks) => {
+    const hp = avail * h, y = v => y0 + hp * (1 - v / ymax);
+    g.fillStyle = css("--shade"); g.fillRect(x(P.outStart / DT), y0, x(Math.min(N-1, (P.outStart + P.outLen) / DT)) - x(P.outStart / DT), hp);
+    g.strokeStyle = css("--grid"); g.lineWidth = 1; g.strokeRect(L, y0, pw, hp);
+    g.fillStyle = css("--mute"); g.textAlign = "right";
+    for (const [v, s] of yTicks) g.fillText(s, L - 5, y(v));
+    fn(y, hp); y0 += hp + gap;
+  };
+  const line = (arr, y, col, w) => { g.beginPath(); arr.forEach((v, i) => i ? g.lineTo(x(i), y(v)) : g.moveTo(x(i), y(v))); g.strokeStyle = col; g.lineWidth = w; g.stroke(); };
+  panel(hs[0], 100, y => {
+    g.setLineDash([3, 3]); g.strokeStyle = css("--grid");
+    for (const e of [P.e1, P.e2, P.e3]) { g.beginPath(); g.moveTo(L, y(e)); g.lineTo(L + pw, y(e)); g.stroke(); }
+    g.setLineDash([]);
+    line(sc.mu, y, css("--meas"), 1); line(sc.rc, y, css("--rc"), 1.2); line(sc.truth, y, css("--truth"), 2);
+    g.textAlign = "left"; let lx = L + 8;
+    for (const [c, s] of [["--truth","true risk"],["--meas","measured (held when blind)"],["--rc","conservative R^c"]]) {
+      g.fillStyle = css(c); g.fillText("■ " + s, lx, 10); lx += g.measureText("■ " + s).width + 14;
+    }
+  }, [[0,"0"],[50,"50"],[100,"100"]]);
+  for (const p of policies) panel(hs[1], 3, y => {
+    g.beginPath(); p.state.forEach((s, i) => { i ? (g.lineTo(x(i), y(p.state[i-1])), g.lineTo(x(i), y(s))) : g.moveTo(x(i), y(s)); });
+    g.strokeStyle = css("--meas"); g.lineWidth = 1.5; g.stroke();
+    g.fillStyle = css("--fg"); g.textAlign = "left";
+    g.fillText(`${p.name}: ${p.m.flips} flips`, L, y0 - 10);
+  }, NAMES.map((n, i) => [i, n]));
+  g.fillStyle = css("--mute"); g.textAlign = "center";
+  for (let h = 17.5; h <= 19.5; h += .5) g.fillText(`${Math.floor(h)}:${h % 1 ? "30" : "00"}`, x((h - 17.5) * 360), H - 9);
+
+  const cols = [["flips","Flips"],["viol","Dwell violations"],["unsafe","Unsafe exposure (s)"],["over","Over-restriction (s)"],["lag","Red lag (s)"]];
+  document.getElementById("tbl").innerHTML = "<tr><th>Policy</th>" + cols.map(c => `<th>${c[1]}</th>`).join("") + "</tr>" +
+    policies.map(p => `<tr><td>${p.name}</td>` + cols.map(c => `<td>${p.m[c[0]] ?? "n/a"}</td>`).join("") + "</tr>").join("");
+  document.getElementById("seedlbl").textContent = P.seed ? ` noise seed ${P.seed} (JS generator)` : " noise seed 0 (numpy, matches sim.py)";
+}
+addEventListener("resize", draw);
+draw();
+</script>
+</body>
+</html>
