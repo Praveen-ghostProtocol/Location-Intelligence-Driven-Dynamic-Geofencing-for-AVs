@@ -29,31 +29,29 @@ One road segment, 17:30-19:30. True risk (0-100) is 5 on a quiet road, ramps to 
 | Conservative, memoryless | State from R^c = 100 min(1, mu + k sigma), no memory |
 | Designed | R^c plus the rules below |
 
-Designed policy (parameters from the submitted document):
+Designed policy (the state machine of the submitted report, Sec. 2.2):
 
 - States: green / yellow / orange / red; enter at R >= 30 / 50 / 70.
-- Persistence: routine escalation needs two consecutive 10 s cycles above the threshold.
+- Persistence: escalation needs two consecutive 10 s cycles above the threshold.
 - Release thresholds 20 / 40 / 60, held for 180 / 120 / 120 s (yellow->green, orange->yellow, red->orange), one level at a time.
-- Minimum dwell of 60 s between routine transitions.
-- Urgent bypass: R >= 85 escalates immediately.
 - Uncertainty: sigma = 0.05 + 0.0015 x seconds since last reading; k = 1.5 (good coverage), 2.0 (blind).
-- Blind beside the stadium: R^c floored at 50 (at least orange).
 
 ## Results
 
-| Policy | Flips | Dwell violations | Unsafe exposure (s) | Over-restriction (s) | Red lag (s) |
+| Policy | Flips | Reversals / 5 min | Unsafe exposure (s) | Over-restriction (s) | Red lag (s) |
 |---|---|---|---|---|---|
-| Naive | 40 | 33 | 120 | 0 | 90 |
-| Conservative, memoryless | 42 | 36 | 0 | 220 | -400 |
-| Designed | 6 | 0 | 0 | 480 | -390 |
+| Naive | 40 | 15 | 120 | 0 | 90 |
+| Conservative, memoryless | 42 | 13 | 0 | 170 | -400 |
+| Designed | 6 | 1 | 0 | 480 | -390 |
 
+- Reversals / 5 min: most up/down direction changes in any 5-minute window. The report's acceptance criterion (Sec. 6.2) is at most 1; only the designed policy meets it.
 - Unsafe exposure: seconds with true risk >= 70 while the state is below red.
 - Over-restriction: seconds in orange/red while true risk < 40 (the efficiency cost).
 - Red lag: first red minus first time true risk >= 70; negative means red came early.
 
 ![results](results.png)
 
-Reading it: the designed policy makes a single green -> yellow -> orange -> red -> orange -> yellow -> green pass with no dwell violations. During the outage the naive policy holds a stale low reading and misses the hazard; the designed policy inflates sigma as data goes stale and restricts early. That early restriction is the safety-vs-efficiency price (480 s over-restriction vs 220 s).
+Reading it: the designed policy makes a single green -> yellow -> orange -> red -> orange -> yellow -> green pass. During the outage the naive policy holds a stale low reading and misses the hazard; the designed policy inflates sigma as data goes stale and restricts early. That early restriction is the safety-vs-efficiency price (480 s over-restriction vs 170 s).
 
 ## Limitations
 

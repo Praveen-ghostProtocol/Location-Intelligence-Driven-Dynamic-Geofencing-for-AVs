@@ -2,7 +2,7 @@
 
 Supports Task 6 (oscillation test) and Task 7 (sensor outage) of the ED5012 midsem answer.
 All data is synthetic: it illustrates the state-machine logic, not real-world performance.
-Parameters match the submitted document (risk 0-100, 10 s cycle).
+Parameters and state machine match the submitted report (risk 0-100, 10 s cycle, Sec. 2.2).
 """
 import numpy as np
 import matplotlib.pyplot as plt
@@ -12,13 +12,10 @@ T_END = 7200                       # 17:30 -> 19:30
 ENTER = [30, 50, 70]               # G->Y, Y->O, O->R
 RELEASE = [20, 40, 60]             # Y->G, O->Y, R->O
 RELEASE_DWELL = [180, 120, 120]    # s below release threshold, indexed by (level being left - 1)
-MIN_DWELL = 60                     # s between routine transitions
-URGENT = 85                        # risk that bypasses persistence and dwell
 OUTAGE = (1080, 1680)              # sensors blind during the crowd ramp-up
 NOISE = 5.0                        # sensor noise, risk points
 SIGMA0, SIGMA_GROWTH = 0.05, 0.0015  # uncertainty; grows per second of staleness
 K_GOOD, K_POOR = 1.5, 2.0          # conservatism by coverage
-EVENT_FLOOR = 50                   # blind beside a stadium -> at least orange
 NAMES = ["green", "yellow", "orange", "red"]
 
 
@@ -38,40 +35,36 @@ def scenario(seed=0):
             mu[i], age[i] = mu[i - 1], age[i - 1] + DT
     sigma = SIGMA0 + SIGMA_GROWTH * age
     rc = 100 * np.minimum(1, mu / 100 + np.where(blind, K_POOR, K_GOOD) * sigma)
-    rc = np.where(blind, np.maximum(rc, EVENT_FLOOR), rc)
     return t, truth, mu, rc, blind
 
 
 def designed(rc):
-    """Persistence (2 cycles) + separate release thresholds + release dwell + min dwell + urgent bypass."""
-    s, since, below, prev_target = 0, MIN_DWELL, 0, 0
-    out, urgent_at = [], set()
-    for i, r in enumerate(rc):
-        since += DT
+    """Report Sec. 2.2: two-cycle persistence to escalate, separate release thresholds, release dwell."""
+    s, below, prev_target, out = 0, 0, 0, []
+    for r in rc:
         target = level(r)
-        if target > s and r >= URGENT:
-            s, since, below = target, 0, 0
-            urgent_at.add(i)
-        elif min(target, prev_target) > s and since >= MIN_DWELL:
-            s, since, below = min(target, prev_target), 0, 0
+        if min(target, prev_target) > s:
+            s, below = min(target, prev_target), 0
         elif s > 0 and r < RELEASE[s - 1]:
             below += DT
-            if below >= RELEASE_DWELL[s - 1] and since >= MIN_DWELL:
-                s, since, below = s - 1, 0, 0
+            if below >= RELEASE_DWELL[s - 1]:
+                s, below = s - 1, 0
         else:
             below = 0
         prev_target = target
         out.append(s)
-    return np.array(out), urgent_at
+    return np.array(out)
 
 
-def metrics(state, truth, urgent_at=()):
+def metrics(state, truth):
     changes = np.flatnonzero(np.diff(state)) + 1
-    viol = sum(1 for a, b in zip(changes, changes[1:]) if (b - a) * DT < MIN_DWELL and b not in urgent_at)
+    dirs = np.sign(state[changes] - state[changes - 1])
+    rev = changes[1:][dirs[1:] != dirs[:-1]]                      # direction reversals (report Sec. 6.2)
+    win = max((((rev >= i) & (rev < i + 300 // DT)).sum() for i in range(len(state))), default=0)
     red, hot = np.flatnonzero(state == 3), np.flatnonzero(truth >= ENTER[2])
     return {
         "flips": len(changes),
-        "dwell violations": viol,
+        "reversals/5min": int(win),
         "unsafe exposure (s)": int(((truth >= ENTER[2]) & (state < 3)).sum() * DT),
         "over-restriction (s)": int(((state >= 2) & (truth < ENTER[1] - 10)).sum() * DT),
         "red lag (s)": int((red[0] - hot[0]) * DT),
@@ -80,13 +73,12 @@ def metrics(state, truth, urgent_at=()):
 
 def main():
     t, truth, mu, rc, blind = scenario()
-    d_state, urgent_at = designed(rc)
     runs = {
-        "naive (mu, single threshold)": (level(mu), ()),
-        "conservative, memoryless": (level(rc), ()),
-        "designed (hysteresis+dwell)": (d_state, urgent_at),
+        "naive (mu, single threshold)": level(mu),
+        "conservative, memoryless": level(rc),
+        "designed (hysteresis+dwell)": designed(rc),
     }
-    res = {n: metrics(s, truth, u) for n, (s, u) in runs.items()}
+    res = {n: metrics(s, truth) for n, s in runs.items()}
 
     cols = list(next(iter(res.values())))
     print(f"{'policy':32}" + "".join(f"{c:>22}" for c in cols))
@@ -96,7 +88,7 @@ def main():
 
     naive, memless, des = (res[n] for n in res)
     assert des["flips"] < memless["flips"] and des["flips"] < naive["flips"]
-    assert des["dwell violations"] == 0
+    assert des["reversals/5min"] <= 1 < memless["reversals/5min"]      # report Sec. 6.2 acceptance criterion
     assert des["unsafe exposure (s)"] < naive["unsafe exposure (s)"]
 
     fig, ax = plt.subplots(4, 1, figsize=(10, 9), sharex=True)
@@ -108,7 +100,7 @@ def main():
         ax[0].axhline(v, ls=":", c="gray", lw=.6)
     ax[0].legend(fontsize=7, loc="upper right")
     ax[0].set_ylabel("risk")
-    for a, (n, (s, _)) in zip(ax[1:], runs.items()):
+    for a, (n, s) in zip(ax[1:], runs.items()):
         a.step(h, s, where="post")
         a.set_yticks(range(4), NAMES, fontsize=7)
         a.set_title(f"{n}: {res[n]['flips']} flips", fontsize=8, loc="left")
